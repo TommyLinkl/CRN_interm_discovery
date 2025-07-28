@@ -19,6 +19,8 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
             'alpha': 0.1,          # Force scaling parameter
             'push_fragments': [],   # Indices of atoms to push apart
             'pull_fragments': [],   # Indices of atoms to pull together
+            'random_pull_pairs': True,  # Randomly select atom pairs to pull
+            'pull_pair_distance_min': 2.0,  # Minimum distance for pull pairs (Å)
             'temperature': 1000.0,  # Temperature for acceptance
             'max_force': 5.0,      # Maximum artificial force magnitude
             'fmax': 0.05,          # Relaxation force threshold
@@ -60,18 +62,19 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
         for step in range(n_steps):
             new_config = self._afir_step(coords, step, trajectory_id)
             
-            if new_config is None:
+            if new_config[0] is None:
                 continue
                 
-            energy_new = new_config.energy
+            config, step_timings = new_config
+            energy_new = config.energy
             delta_energy = energy_new - energy_ref
             
             if (delta_energy <= self.parameters['energy_window'] and
                 MetropolisAcceptance.accept(energy_ref, energy_new, 
                                           self.parameters['temperature'])):
-                coords = new_config.coords
+                coords = config.coords
                 energy_ref = energy_new
-                discovered.add(new_config)
+                discovered.add(config)
         
         self.results.extend(discovered.configurations)
         return discovered
@@ -107,16 +110,27 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
         self.relaxer.atoms.calc = afir_calc
         
         try:
+            # Time artificial force application and relaxation
+            force_start = time.time()
             new_coords = self._apply_artificial_force_and_relax(coords)
+            relax_with_forces_time = time.time() - force_start
             
+            # Time final relaxation
+            final_relax_start = time.time()
             self.relaxer.atoms.calc = original_calc
             final_coords = self.relaxer.relax(new_coords)
+            final_relax_time = time.time() - final_relax_start
             
-            return self._create_configuration(final_coords, step + 1, trajectory_id)
+            timings = {
+                'force_time': relax_with_forces_time,
+                'relax_time': final_relax_time
+            }
+            
+            return self._create_configuration(final_coords, step + 1, trajectory_id), timings
             
         except Exception:
             self.relaxer.atoms.calc = original_calc
-            return None
+            return None, None
     
     def _calculate_artificial_forces(self, coords: np.ndarray) -> np.ndarray:
         """Calculate artificial forces for AFIR."""
@@ -128,8 +142,13 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
         if self.parameters['pull_fragments']:
             artificial_forces += self._calculate_pull_forces(coords)
         
+        # When no specific fragments are defined, use default radial forces
         if not self.parameters['push_fragments'] and not self.parameters['pull_fragments']:
             artificial_forces = self._calculate_default_forces(coords)
+            
+            # Add random pull forces on top of default radial forces
+            if self.parameters['random_pull_pairs']:
+                artificial_forces += self._calculate_random_pull_forces(coords)
         
         force_magnitude = np.linalg.norm(artificial_forces.reshape(-1))
         if force_magnitude > self.parameters['max_force']:
@@ -221,3 +240,40 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
         relaxed_coords = self.relaxer.relax(displaced_coords)
         
         return relaxed_coords
+    
+    def _calculate_random_pull_forces(self, coords: np.ndarray) -> np.ndarray:
+        """Calculate additional pull forces between randomly selected atom pairs."""
+        forces = np.zeros_like(coords)
+        alpha = self.parameters['alpha']
+        min_distance = self.parameters['pull_pair_distance_min']
+        n_atoms = len(coords)
+        
+        if n_atoms < 2:
+            return forces
+        
+        # Find suitable atom pairs (separated by at least min_distance)
+        suitable_pairs = []
+        for i in range(n_atoms):
+            for j in range(i + 1, n_atoms):
+                distance = np.linalg.norm(coords[i] - coords[j])
+                if distance >= min_distance:
+                    suitable_pairs.append((i, j, distance))
+        
+        if not suitable_pairs:
+            return forces  # No suitable pairs found
+        
+        # Randomly select one pair to pull together
+        atom_i, atom_j, current_distance = suitable_pairs[np.random.randint(len(suitable_pairs))]
+        
+        # Calculate pull force (attractive, proportional to distance)
+        direction = coords[atom_j] - coords[atom_i]
+        direction_normalized = direction / current_distance
+        
+        # Force magnitude increases with distance (encourages bond formation)
+        force_magnitude = alpha * current_distance * 0.5  # Scale down to avoid overwhelming radial forces
+        
+        # Apply equal and opposite forces
+        forces[atom_i] += force_magnitude * direction_normalized
+        forces[atom_j] -= force_magnitude * direction_normalized
+        
+        return forces
