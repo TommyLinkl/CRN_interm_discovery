@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from typing import List
 from ase.units import kB
 from core import Potential, Configuration, ConfigurationSet
@@ -66,8 +67,18 @@ class StochasticSurfaceWalk(DiscoveryMethod):
         
         discovered.add(self._create_configuration(coords, 0, trajectory_id))
         
+        total_time = 0.0
+        mode_time = 0.0
+        relax_time = 0.0
+        
         for step in range(n_steps):
-            new_min, intermediates, _ = self._climb_step(coords)
+            step_start = time.time()
+            new_min, step_timings = self._climb_step(coords)
+            step_time = time.time() - step_start
+            
+            total_time += step_time
+            mode_time += step_timings['mode_time']
+            relax_time += step_timings['relax_time']
             energy_new = self.potential.energy(new_min)
             delta_energy = energy_new - energy_ref
             
@@ -79,45 +90,61 @@ class StochasticSurfaceWalk(DiscoveryMethod):
                 coords = new_min
                 energy_ref = energy_new
                 
-                for i, inter_coords in enumerate(intermediates):
-                    config = self._create_configuration(
-                        inter_coords, step * self.parameters['NG'] + i + 1, trajectory_id
-                    )
-                    discovered.add(config)
-                
+                # Only save the final minimum from this MC step
                 final_config = self._create_configuration(new_min, step + 1, trajectory_id)
                 discovered.add(final_config)
         
         self.results.extend(discovered.configurations)
+        
+        if n_steps > 0:
+            print(f"SSW Timing Summary (n_steps={n_steps}):")
+            print(f"  Total time: {total_time:.3f}s ({total_time/n_steps:.3f}s/step)")
+            print(f"  Mode generation: {mode_time:.3f}s ({mode_time/total_time*100:.1f}%)")
+            print(f"  Relaxation: {relax_time:.3f}s ({relax_time/total_time*100:.1f}%)")
+        
         return discovered
     
     def _climb_step(self, coords: np.ndarray):
         """Perform one SSW climbing step."""
         current = coords.copy()
         energy_start = self.potential.energy(current)
-        intermediates = []
         
+        # Time mode generation
+        mode_start = time.time()
         mode = self._generate_random_mode(current)
-        original_calc = self.relaxer.atoms.calc
+        mode_time = time.time() - mode_start
         
+        original_calc = self.relaxer.atoms.calc
         self.bias.clear()
+        
+        relax_time = 0.0
         
         for _ in range(self.parameters['NG']):
             mode = self._refine_mode(current, mode)
             self.bias.add_gaussian(center=current, direction=mode)
             trial = current + mode * self.parameters['ds_atom']
             
+            # Time biased relaxation
+            relax_start = time.time()
             biased_calc = BiasCalculator(original_calc, self.bias)
             self.relaxer.atoms.calc = biased_calc
             trial = self.relaxer.relax(trial)
+            relax_time += time.time() - relax_start
             
-            intermediates.append(trial.copy())
             current = trial
         
+        # Time final relaxation
+        final_relax_start = time.time()
         self.relaxer.atoms.calc = original_calc
         final_min = self.relaxer.relax(current)
+        relax_time += time.time() - final_relax_start
         
-        return final_min, intermediates, energy_start
+        timings = {
+            'mode_time': mode_time,
+            'relax_time': relax_time
+        }
+        
+        return final_min, timings
     
     def _generate_random_mode(self, coords: np.ndarray) -> np.ndarray:
         """Generate random displacement mode combining global and local."""
