@@ -18,36 +18,10 @@ This framework implements three discovery methods for finding stable molecular c
 pip install -r requirements.txt
 ```
 
-### Basic Usage
+### Example usage
+`python run_calc1_example.py`
 
-```python
-from core import LJPotential
-from methods import StochasticSurfaceWalk
-from utils import load_xyz
-
-# Load molecular structure
-coords, atoms = load_xyz("input.xyz")
-
-# Set up potential and method
-potential = LJPotential(atoms)
-ssw = StochasticSurfaceWalk(potential, atoms, temperature=2000.0)
-
-# Run discovery
-results = ssw.discover(coords, n_steps=1000)
-print(f"Discovered {len(results)} configurations")
-```
-
-### Command Line Usage
-
-```bash
-python discovery_runner.py input.xyz \
-    --methods ssw afir mc \
-    --n-trajectories 5 \
-    --n-steps 1000 \
-    --output-prefix discovery
-```
-
-### Configuration File
+### Usage via config File
 
 ```yaml
 # config.yaml
@@ -65,8 +39,34 @@ ssw_params:
 python discovery_runner.py --config config.yaml
 ```
 
-## Examples
-`python run_calc1_example.py`
+### Command Line Usage
+
+```bash
+python discovery_runner.py input.xyz \
+    --methods ssw afir mc \
+    --n-trajectories 5 \
+    --n-steps 1000 \
+    --output-prefix discovery
+```
+
+### Function Usage
+
+```python
+from core import LJPotential
+from methods import StochasticSurfaceWalk
+from utils import load_xyz
+
+# Load molecular structure
+coords, atoms = load_xyz("input.xyz")
+
+# Set up potential and method
+potential = LJPotential(atoms)
+ssw = StochasticSurfaceWalk(potential, atoms, temperature=2000.0)
+
+# Run discovery
+results = ssw.discover(coords, n_steps=1000)
+print(f"Discovered {len(results)} configurations")
+```
 
 ## Architecture
 
@@ -95,11 +95,3 @@ Results are saved as multi-frame XYZ files containing:
 - Discovered molecular configurations
 - Energy values and metadata
 - Method and trajectory information
-
-## Requirements
-
-- Python ≥ 3.8
-- NumPy
-- ASE (Atomic Simulation Environment)
-- PyYAML
-- SciPy
