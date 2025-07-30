@@ -24,8 +24,10 @@ class StochasticSurfaceWalk(DiscoveryMethod):
             'temperature': 3000.0,
             'energy_window': 20.0,
             'ratio_local': 100.0,
-            'fmax': 0.05,
-            'relax_steps': 500,
+            'fmax': 0.05,         # Accurate final relaxation
+            'relax_steps': 100,   # Reduced but still accurate
+            'fmax_biased': 0.3,   # Much faster biased steps
+            'relax_steps_biased': 50,  # Very few steps for biased relaxation
             'delta_R': 0.005,
             'rot_tol': 1e-3,
             'rot_max_iter': 10
@@ -39,10 +41,18 @@ class StochasticSurfaceWalk(DiscoveryMethod):
             self.parameters['W'],
             self.parameters['NG']
         )
+        # Main relaxer for final unbiased relaxation
         self.relaxer = LocalRelaxer(
             atoms,
             fmax=self.parameters['fmax'],
             steps=self.parameters['relax_steps']
+        )
+        
+        # Faster relaxer for biased climbing steps
+        self.biased_relaxer = LocalRelaxer(
+            atoms,
+            fmax=self.parameters['fmax_biased'],
+            steps=self.parameters['relax_steps_biased']
         )
     
     def get_method_name(self) -> str:
@@ -69,7 +79,8 @@ class StochasticSurfaceWalk(DiscoveryMethod):
         
         total_time = 0.0
         mode_time = 0.0
-        relax_time = 0.0
+        climbing_time = 0.0
+        final_relax_time = 0.0
         
         for step in range(n_steps):
             step_start = time.time()
@@ -78,21 +89,21 @@ class StochasticSurfaceWalk(DiscoveryMethod):
             
             total_time += step_time
             mode_time += step_timings['mode_time']
-            relax_time += step_timings['relax_time']
+            climbing_time += step_timings['climbing_time']
+            final_relax_time += step_timings['final_relax_time']
             energy_new = self.potential.energy(new_min)
             delta_energy = energy_new - energy_ref
             
-            if delta_energy > self.parameters['energy_window']:
-                continue
-                
-            if MetropolisAcceptance.accept(energy_ref, energy_new, 
-                                          self.parameters['temperature']):
+            # Always save the final unbiased minimum as a discovered product
+            final_config = self._create_configuration(new_min, step + 1, trajectory_id)
+            discovered.add(final_config)
+            
+            # MC acceptance only determines if we update the reference for next iteration
+            if (delta_energy <= self.parameters['energy_window'] and
+                MetropolisAcceptance.accept(energy_ref, energy_new, 
+                                          self.parameters['temperature'])):
                 coords = new_min
                 energy_ref = energy_new
-                
-                # Only save the final minimum from this MC step
-                final_config = self._create_configuration(new_min, step + 1, trajectory_id)
-                discovered.add(final_config)
         
         self.results.extend(discovered.configurations)
         
@@ -100,7 +111,9 @@ class StochasticSurfaceWalk(DiscoveryMethod):
             print(f"SSW Timing Summary (n_steps={n_steps}):")
             print(f"  Total time: {total_time:.3f}s ({total_time/n_steps:.3f}s/step)")
             print(f"  Mode generation: {mode_time:.3f}s ({mode_time/total_time*100:.1f}%)")
-            print(f"  Relaxation: {relax_time:.3f}s ({relax_time/total_time*100:.1f}%)")
+            print(f"  Biased climbing: {climbing_time:.3f}s ({climbing_time/total_time*100:.1f}%)")
+            print(f"  Final relaxation: {final_relax_time:.3f}s ({final_relax_time/total_time*100:.1f}%)")
+            print(f"  Total relaxation: {(climbing_time + final_relax_time):.3f}s ({(climbing_time + final_relax_time)/total_time*100:.1f}%)")
         
         return discovered
     
@@ -117,31 +130,32 @@ class StochasticSurfaceWalk(DiscoveryMethod):
         original_calc = self.relaxer.atoms.calc
         self.bias.clear()
         
-        relax_time = 0.0
+        climbing_time = 0.0
         
         for _ in range(self.parameters['NG']):
             mode = self._refine_mode(current, mode)
             self.bias.add_gaussian(center=current, direction=mode)
             trial = current + mode * self.parameters['ds_atom']
             
-            # Time biased relaxation
-            relax_start = time.time()
+            # Time biased climbing step (use faster relaxer)
+            climb_start = time.time()
             biased_calc = BiasCalculator(original_calc, self.bias)
-            self.relaxer.atoms.calc = biased_calc
-            trial = self.relaxer.relax(trial)
-            relax_time += time.time() - relax_start
+            self.biased_relaxer.atoms.calc = biased_calc
+            trial = self.biased_relaxer.relax(trial)
+            climbing_time += time.time() - climb_start
             
             current = trial
         
-        # Time final relaxation
+        # Time final unbiased relaxation
         final_relax_start = time.time()
         self.relaxer.atoms.calc = original_calc
         final_min = self.relaxer.relax(current)
-        relax_time += time.time() - final_relax_start
+        final_relax_time = time.time() - final_relax_start
         
         timings = {
             'mode_time': mode_time,
-            'relax_time': relax_time
+            'climbing_time': climbing_time,
+            'final_relax_time': final_relax_time
         }
         
         return final_min, timings

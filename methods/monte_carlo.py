@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from typing import List, Optional
 from core import Potential, Configuration, ConfigurationSet
 from utils import LocalRelaxer, MetropolisAcceptance
@@ -61,10 +62,21 @@ class MonteCarloDiscovery(DiscoveryMethod):
         discovered.add(self._create_configuration(coords, 0, trajectory_id))
         
         n_accepted = 0
+        total_time = 0.0
+        move_gen_time = 0.0
+        energy_eval_time = 0.0
+        relax_time = 0.0
         
         for step in range(n_steps):
+            # Time trial move generation
+            move_start = time.time()
             trial_coords = self._generate_trial_move(coords)
+            move_gen_time += time.time() - move_start
+            
+            # Time energy evaluation
+            energy_start = time.time()
             energy_trial = self.potential.energy(trial_coords)
+            energy_eval_time += time.time() - energy_start
             
             delta_energy = energy_trial - energy_current
             
@@ -187,6 +199,11 @@ class SimulatedAnnealing(MonteCarloDiscovery):
         
         discovered.add(self._create_configuration(coords, 0, trajectory_id))
         
+        total_time = 0.0
+        move_gen_time = 0.0
+        energy_eval_time = 0.0
+        n_accepted = 0
+        
         for step in range(n_steps):
             if (step % self.parameters['cooling_frequency'] == 0 and 
                 step > 0):
@@ -196,16 +213,35 @@ class SimulatedAnnealing(MonteCarloDiscovery):
                     self.parameters['final_temperature']
                 )
             
+            # Time trial move generation
+            move_start = time.time()
             trial_coords = self._generate_trial_move(coords)
+            move_gen_time += time.time() - move_start
+            
+            # Time energy evaluation
+            energy_start = time.time()
             energy_trial = self.potential.energy(trial_coords)
+            energy_eval_time += time.time() - energy_start
             
             if MetropolisAcceptance.accept(energy_current, energy_trial, 
                                           self.current_temperature):
                 coords = trial_coords
                 energy_current = energy_trial
+                n_accepted += 1
                 
                 config = self._create_configuration(coords, step + 1, trajectory_id)
                 discovered.add(config)
         
         self.results.extend(discovered.configurations)
+        
+        total_time = move_gen_time + energy_eval_time
+        
+        if n_steps > 0:
+            print(f"Simulated Annealing Timing Summary (n_steps={n_steps}):")
+            print(f"  Total time: {total_time:.3f}s ({total_time/n_steps:.3f}s/step)")
+            print(f"  Move generation: {move_gen_time:.3f}s ({move_gen_time/total_time*100:.1f}%)")
+            print(f"  Energy evaluation: {energy_eval_time:.3f}s ({energy_eval_time/total_time*100:.1f}%)")
+            print(f"  Acceptance rate: {n_accepted/n_steps*100:.1f}%")
+            print(f"  Final temperature: {self.current_temperature:.1f}K")
+        
         return discovered

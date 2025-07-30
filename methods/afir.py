@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from typing import List, Tuple, Optional
 from core import Potential, Configuration, ConfigurationSet
 from utils import LocalRelaxer, MetropolisAcceptance
@@ -23,18 +24,28 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
             'pull_pair_distance_min': 2.0,  # Minimum distance for pull pairs (Å)
             'temperature': 1000.0,  # Temperature for acceptance
             'max_force': 5.0,      # Maximum artificial force magnitude
-            'fmax': 0.05,          # Relaxation force threshold
-            'relax_steps': 500,    # Maximum relaxation steps
+            'fmax': 0.1,           # Faster relaxation
+            'relax_steps': 100,    # Halved for speed
+            'fmax_constrained': 0.2,  # Even faster for artificial force relaxation
+            'relax_steps_constrained': 50,   # Halved for maximum speed
             'energy_window': 50.0  # Energy window for acceptance
         }
         default_params.update(kwargs)
         super().__init__(potential, **default_params)
         
         self.atoms = atoms
+        # Final relaxer (more accurate)
         self.relaxer = LocalRelaxer(
             atoms,
             fmax=self.parameters['fmax'],
             steps=self.parameters['relax_steps']
+        )
+        
+        # Constrained relaxer (faster for artificial force steps)
+        self.constrained_relaxer = LocalRelaxer(
+            atoms,
+            fmax=self.parameters['fmax_constrained'],
+            steps=self.parameters['relax_steps_constrained']
         )
     
     def get_method_name(self) -> str:
@@ -59,6 +70,10 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
         
         discovered.add(self._create_configuration(coords, 0, trajectory_id))
         
+        total_time = 0.0
+        force_calc_time = 0.0
+        relax_time = 0.0
+        
         for step in range(n_steps):
             new_config = self._afir_step(coords, step, trajectory_id)
             
@@ -66,6 +81,10 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
                 continue
                 
             config, step_timings = new_config
+            if step_timings:
+                force_calc_time += step_timings['force_time']
+                relax_time += step_timings['relax_time']
+            
             energy_new = config.energy
             delta_energy = energy_new - energy_ref
             
@@ -77,6 +96,15 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
                 discovered.add(config)
         
         self.results.extend(discovered.configurations)
+        
+        total_time = force_calc_time + relax_time
+        
+        if n_steps > 0 and total_time > 0:
+            print(f"AFIR Timing Summary (n_steps={n_steps}):")
+            print(f"  Total time: {total_time:.3f}s ({total_time/n_steps:.3f}s/step)")
+            print(f"  Force calculation: {force_calc_time:.3f}s ({force_calc_time/total_time*100:.1f}%)")
+            print(f"  Relaxation: {relax_time:.3f}s ({relax_time/total_time*100:.1f}%)")
+        
         return discovered
     
     def _afir_step(self, coords: np.ndarray, step: int, 
@@ -117,7 +145,7 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
             
             # Time final relaxation
             final_relax_start = time.time()
-            self.relaxer.atoms.calc = original_calc
+            self.constrained_relaxer.atoms.calc = original_calc
             final_coords = self.relaxer.relax(new_coords)
             final_relax_time = time.time() - final_relax_start
             
@@ -129,7 +157,7 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
             return self._create_configuration(final_coords, step + 1, trajectory_id), timings
             
         except Exception:
-            self.relaxer.atoms.calc = original_calc
+            self.constrained_relaxer.atoms.calc = original_calc
             return None, None
     
     def _calculate_artificial_forces(self, coords: np.ndarray) -> np.ndarray:
@@ -237,7 +265,8 @@ class ArtificialForceInducedReaction(DiscoveryMethod):
         
         displaced_coords = coords + displacement_scale * artificial_forces
         
-        relaxed_coords = self.relaxer.relax(displaced_coords)
+        # Use faster relaxer for artificial force relaxation
+        relaxed_coords = self.constrained_relaxer.relax(displaced_coords)
         
         return relaxed_coords
     
