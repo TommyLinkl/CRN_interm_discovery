@@ -153,7 +153,7 @@ def run_with_config_file():
     runner = DiscoveryRunner()
     
     try:
-        results = runner.run_discovery(config_file="CALCS/calc_1/config_new.yml")
+        results = runner.run_discovery(config_file="CALCS/calc_1/config.yml")
         print(f"\nConfig-based run completed successfully!")
         print(f"Total configurations discovered: {len(results)}")
         
@@ -176,7 +176,7 @@ def main():
     Path("CALCS/calc_1").mkdir(parents=True, exist_ok=True)
     
     # Run individual methods first
-    run_individual_methods()
+    # run_individual_methods()
     
     # Then try config file approach
     run_with_config_file()
@@ -185,10 +185,6 @@ def main():
     print("EXAMPLE COMPLETED")
     print("="*60)
     print("Output files created in CALCS/calc_1/:")
-    print("  - ssw_results.xyz")
-    print("  - afir_results.xyz") 
-    print("  - mc_results.xyz")
-    print("  - all_results.xyz")
     print("  - discovery_results_*.xyz (from config run)")
 
 if __name__ == '__main__':
