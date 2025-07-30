@@ -66,27 +66,17 @@ python discovery_runner.py --config config.yaml
 ```
 
 ## Examples
-
-- **Basic usage**: `python run_calc1_example.py`
-- **Real system**: `python run_calc1_example.py`
+`python run_calc1_example.py`
 
 ## Architecture
 
 ```
-intermediates/
+CRN_interm_discovery/
 ├── core/          # Core abstractions (PES, data structures)
 ├── methods/       # Discovery methods (SSW, AFIR, MC)
 ├── utils/         # Utilities (I/O, relaxation, bias)
 └── discovery_runner.py  # Main orchestration script
 ```
-
-## Key Features
-
-- **Modular Design** - Easy to extend with new methods or potentials
-- **Multiple Methods** - Three complementary discovery approaches
-- **Flexible I/O** - XYZ file support with trajectory tracking
-- **Configuration** - YAML/JSON config file support
-- **Extensible** - Abstract base classes for custom implementations
 
 ## Methods
 
@@ -113,27 +103,3 @@ Results are saved as multi-frame XYZ files containing:
 - ASE (Atomic Simulation Environment)
 - PyYAML
 - SciPy
-
-## Documentation
-
-- [Installation Guide](INSTALL.md)
-- [API Documentation](docs/API.md)
-- [Development Guide](development.md)
-- [Contributing Guidelines](CONTRIBUTING.md)
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Citation
-
-If you use this framework in your research, please cite:
-
-```bibtex
-@software{molecular_discovery_framework,
-  title={Molecular Discovery Framework},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/yourusername/molecular-discovery}
-}
-```
